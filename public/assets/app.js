@@ -287,6 +287,8 @@
             var changeDisplay = document.getElementById('change-display');
             var btnCheckout = document.getElementById('btn-checkout');
 
+            if (!cashInput || !changeDisplay) return;
+
             // Handle Indonesian locale manual parsing if needed, but for now simple numeric
             var cashRaw = cashInput.value.replace(/[^0-9]/g, '');
             // The input is in raw numbers, effectively cents if user types "10000" it means 10000.
@@ -305,15 +307,19 @@
 
             if (diff >= 0) {
                 changeDisplay.value = fmt(diff);
-                if (this.cart.length > 0) btnCheckout.disabled = false;
+                if (this.cart.length > 0 && btnCheckout) btnCheckout.disabled = false;
             } else {
                 changeDisplay.value = 'Kurang ' + fmt(Math.abs(diff));
                 // Only disable if payment method is CASH. For QRIS, we assume exact payment.
-                var isCash = document.querySelector('input[name="payment_method"][value="cash"]').checked;
-                if (isCash && this.cart.length > 0) {
-                     btnCheckout.disabled = true;
-                } else if (!isCash && this.cart.length > 0) {
-                     btnCheckout.disabled = false;
+                var isCashInput = document.querySelector('input[name="payment_method"][value="cash"]');
+                var isCash = isCashInput ? isCashInput.checked : true;
+
+                if (btnCheckout) {
+                    if (isCash && this.cart.length > 0) {
+                         btnCheckout.disabled = true;
+                    } else if (!isCash && this.cart.length > 0) {
+                         btnCheckout.disabled = false;
+                    }
                 }
             }
         }
@@ -321,6 +327,28 @@
 
     // Expose to window for inline onclick handlers
     window.POS = POS;
+
+    // Expose tab switcher to global scope (simple fix for inline onclicks)
+    window.switchTab = function(tabId) {
+        document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+        var target = document.getElementById('tab-' + tabId);
+        if (target) target.style.display = 'block';
+
+        // Simple active state for buttons
+        document.querySelectorAll('.header .btn').forEach(btn => {
+            if(btn.textContent.toLowerCase().includes(tabId)) {
+                btn.classList.add('btn-primary');
+            } else {
+                btn.classList.remove('btn-primary');
+            }
+        });
+    };
+
+    // Expose closeCard
+    window.closeCard = function() {
+        var modal = document.getElementById('modal-card');
+        if (modal) modal.style.display = 'none';
+    };
 
     document.addEventListener('DOMContentLoaded', function () {
         initTemplatePicker();

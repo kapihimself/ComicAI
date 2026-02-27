@@ -10,7 +10,9 @@ use Siappos\Domain\Auth\UserRepository;
 use Siappos\Domain\Order\Actions\CheckoutAction;
 use Siappos\Domain\Order\DTO\CartItemData;
 use Siappos\Domain\Order\DTO\CheckoutData;
+use Siappos\Domain\Product\Actions\AdjustStockAction;
 use Siappos\Domain\Product\ProductRepository;
+use Siappos\Domain\Product\StockMovementRepository;
 use Siappos\Domain\Settings\Actions\CompleteOnboardingAction;
 use Siappos\Domain\Settings\BusinessTemplate;
 use Siappos\Domain\Settings\DTO\OnboardingData;
@@ -28,9 +30,12 @@ require_once dirname(__DIR__) . '/src/bootstrap.php';
 $userRepository = new UserRepository($pdo);
 $productRepository = new ProductRepository($pdo);
 $settingsRepository = new SettingsRepository($pdo);
+$stockMovementRepository = new StockMovementRepository($pdo);
+
 $authAction = new AuthenticateAction($userRepository);
 $completeOnboardingAction = new CompleteOnboardingAction($settingsRepository);
 $checkoutAction = new CheckoutAction($productRepository, $pdo);
+$adjustStockAction = new AdjustStockAction($productRepository, $pdo);
 
 $page = (string) ($_GET['page'] ?? 'home');
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
@@ -265,7 +270,7 @@ if ($page === 'pos' && $method === 'GET') {
 
 if ($page === 'checkout' && $method === 'POST') {
     $requireAuth();
-    $requireCsrf('pos'); // Note: fallback page 'pos' not actually used in this simple CSRF helper, but okay.
+    $requireCsrf('pos');
 
     try {
         $user = Auth::user();
@@ -305,7 +310,6 @@ if ($page === 'receipt' && $method === 'GET') {
         Response::redirect('/?page=dashboard');
     }
 
-    // Fetch order directly for now (Repository pattern for Order not fully implemented yet in prompt spec)
     $stmt = $pdo->prepare("
         SELECT o.*, u.full_name as cashier_name
         FROM orders o
@@ -331,6 +335,68 @@ if ($page === 'receipt' && $method === 'GET') {
         'orderLines' => $orderLines,
         'settings' => $settings,
     ]);
+    exit;
+}
+
+if ($page === 'inventory' && $method === 'GET') {
+    $requireAuth();
+
+    $products = $productRepository->all();
+    View::render('inventory', ['products' => $products]);
+    exit;
+}
+
+if ($page === 'inventory-adjust' && $method === 'POST') {
+    $requireAuth();
+    $requireCsrf('inventory');
+
+    if (!Auth::hasAnyRole('admin', 'manager')) {
+        Flash::error('Hanya Admin/Manager yang dapat mengubah stok.');
+        Response::redirect('/?page=inventory');
+    }
+
+    try {
+        $productId = (int) ($_POST['product_id'] ?? 0);
+        $reason = (string) ($_POST['reason'] ?? '');
+        $notes = (string) ($_POST['notes'] ?? '');
+        $reference = (string) ($_POST['reference_id'] ?? '');
+
+        // Determine Qty
+        if (isset($_POST['qty_change']) && ((float)$_POST['qty_change'] > 0)) {
+            // Purchase/Restock form
+            $qtyInput = (float) $_POST['qty_change'];
+        } else {
+             // Opname form
+             $abs = (float) ($_POST['qty_change_abs'] ?? 0);
+             $dir = (string) ($_POST['direction'] ?? '+');
+             $qtyInput = ($dir === '-') ? -$abs : $abs;
+        }
+
+        $adjustStockAction->execute(
+            productId: $productId,
+            qtyChange: $qtyInput,
+            reason: $reason,
+            reference: $reference,
+            notes: $notes,
+            actorId: (int) Auth::user()['id']
+        );
+
+        Flash::success('Stok berhasil diperbarui.');
+        Response::redirect('/?page=inventory');
+    } catch (Throwable $e) {
+        Flash::error($e->getMessage());
+        Response::redirect('/?page=inventory');
+    }
+}
+
+if ($page === 'stock-card' && $method === 'GET') {
+    $requireAuth();
+    header('Content-Type: application/json');
+
+    $productId = (int) ($_GET['product_id'] ?? 0);
+    $history = $stockMovementRepository->findByProductId($productId);
+
+    echo json_encode($history);
     exit;
 }
 
